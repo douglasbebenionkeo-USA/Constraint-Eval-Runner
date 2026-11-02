@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Constraint Eval Runner</title>
+<style>
+:root{--bg:#faf9f6;--card:#fff;--tx:#1f1d1a;--mu:#6b665e;--bd:#e3dfd6;--ac:#c4552d;--ok:#2e7d4f;--no:#b3261e;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1a1917;--card:#24221f;--tx:#efece6;--mu:#a29b90;--bd:#3a3733;--ac:#e8845f;--ok:#6cc48f;--no:#f08a82}}
+:root[data-theme="dark"]{--bg:#1a1917;--card:#24221f;--tx:#efece6;--mu:#a29b90;--bd:#3a3733;--ac:#e8845f;--ok:#6cc48f;--no:#f08a82}
+html,body{margin:0}*{box-sizing:border-box}
+body{background:var(--bg);color:var(--tx);font:16px/1.5 Georgia,'Times New Roman',serif}
+main{max-width:860px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:1.6rem;margin:.2em 0}p.sub{color:var(--mu);margin:0 0 16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin:12px 0}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.grow{flex:1}
+button{font:inherit;font-size:.9rem;padding:7px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--tx);cursor:pointer}
+button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+textarea{width:100%;min-height:90px;font:15px/1.4 ui-monospace,Menlo,monospace;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:8px;margin-top:8px}
+.pill{font:.72rem system-ui,sans-serif;padding:2px 8px;border-radius:99px;border:1px solid var(--bd);color:var(--mu)}
+.chk{display:flex;gap:8px;font:14px system-ui,sans-serif;margin:3px 0;align-items:baseline}
+.chk.rh{cursor:pointer}.chk.rh:hover{text-decoration:underline dotted}
+.p{color:var(--ok)}.f{color:var(--no)}.note{color:var(--mu);font-size:12px}
+.score{font:600 .95rem system-ui,sans-serif;margin-top:6px}
+.tblwrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font:14px system-ui,sans-serif}th,td{padding:6px 8px;text-align:left;border-bottom:1px solid var(--bd)}
+.big{font:700 1.8rem system-ui,sans-serif}.mu{color:var(--mu);font:13px system-ui,sans-serif;margin:8px 0 0}
+label{font:14px system-ui,sans-serif;display:inline-flex;gap:6px;align-items:center;margin-right:14px}
+details{font:14px system-ui,sans-serif}summary{cursor:pointer;font-weight:600}details ul{margin:8px 0 0;padding-left:20px}
+</style></head><body><main>
+<h1>Constraint Eval Runner</h1>
+<p class="sub">Paste a model's poem under each prompt. Constraints are checked automatically; you mark topic and coherence. Score two model versions to see hill climbing in action.</p>
+<div class="card"><div class="row">
+<button id="tA" class="on">Model A (baseline)</button><button id="tB">Model B (new version)</button>
+<span class="grow"></span><button id="demo">Load demo</button><button id="clr">Clear this model</button></div></div>
+<div class="card"><details><summary>How scoring works</summary><ul>
+<li>Each prompt earns 1 point per explicit constraint met, plus 1 for topic and 1 for coherence.</li>
+<li>Prompt score = points earned ÷ points possible. Overall score = average of scored prompts.</li>
+<li>Strict pass = every point earned on a prompt. Strict pass rate = share of scored prompts that are strict passes.</li>
+<li>Lines are counted by line breaks. For prompt 10 the first line is treated as the title.</li>
+<li>Rhyme checks are a heuristic (matching last two letters of the end words). Click a rhyme check to override it.</li>
+<li>Keep prompts and rubric fixed between runs so a higher score means a better model, not an easier test.</li></ul></details></div>
+<div class="card" id="sum"></div>
+<div id="list"></div>
+<div class="card"><div class="row"><button id="rep">Copy report</button><span class="note" id="repmsg"></span></div>
+<textarea id="repbox" hidden readonly></textarea></div>
+</main>
+<script>
+(function(){
+var $=function(id){return document.getElementById(id)};
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function wd(s){return s.trim().split(/\s+/).filter(Boolean).length}
+function last(l){var m=l.toLowerCase().match(/[a-z']+/g);return m?m[m.length-1].replace(/'/g,''):''}
+function rh(a,b){return !!a&&!!b&&a!==b&&a.slice(-2)===b.slice(-2)}
+function sch(L,p){if(L.length!==p.length)return false;for(var i=0;i<p.length;i++)for(var j=i+1;j<p.length;j++)if(p[i]===p[j]&&!rh(last(L[i]),last(L[j])))return false;return true}
+function has(t,w){return(t.toLowerCase().match(new RegExp('\\b'+w+'\\w*','g'))||[]).length}
+function cnt(t,w){return(t.toLowerCase().match(new RegExp('\\b'+w+'\\b','g'))||[]).length}
+function N(n){return['Exactly '+n+' poem lines',function(L){return L.length===n}]}
+var P=[
+{t:'Write a short, rhyming poem about a dog. It must be exactly 4 lines.',d:'Easy',c:[N(4),['Rhymes (AABB)',function(L){return sch(L,'AABB')}]]},
+{t:'Write a 6-line poem about the ocean. Do not use the word "blue."',d:'Easy',c:[N(6),['No "blue"',function(L,T){return !has(T,'blue')}]]},
+{t:'Write a 4-line poem about a cat in AABB rhyme. The first line must start with "Softly."',d:'Medium',c:[N(4),['AABB rhyme',function(L){return sch(L,'AABB')}],['Line 1 starts with "Softly"',function(L){return /^softly\b/i.test(L[0]||'')}]]},
+{t:'Write a 5-line poem about autumn. Every line at most 8 words. Do not use "leaves."',d:'Medium',c:[N(5),['Each line ≤ 8 words',function(L){return L.length>0&&L.every(function(l){return wd(l)<=8})}],['No "leaves"',function(L,T){return !has(T,'leaves')}]]},
+{t:'Write a poem about a rainy day in exactly 4 lines, ABAB rhyme, with no commas.',d:'Medium',c:[N(4),['ABAB rhyme',function(L){return sch(L,'ABAB')}],['No commas',function(L,T){return T.indexOf(',')<0}]]},
+{t:'Write a 4-line poem about coffee. Line 1 must contain "morning," and the last line must be a question.',d:'Medium',c:[N(4),['Line 1 contains "morning"',function(L){return /\bmorning\b/i.test(L[0]||'')}],['Last line is a question',function(L){return /\?\W*$/.test(L[L.length-1]||'')}]]},
+{t:'Write a 6-line poem about a train. AABBCC rhyme, "midnight" exactly once, no exclamation marks.',d:'Hard',c:[N(6),['AABBCC rhyme',function(L){return sch(L,'AABBCC')}],['"midnight" exactly once',function(L,T){return cnt(T,'midnight')===1}],['No "!"',function(L,T){return T.indexOf('!')<0}]]},
+{t:'Write a 4-line poem about a lighthouse. Each line starts with a different letter, AABB rhyme, no line over 7 words.',d:'Hard',c:[N(4),['Different starting letters',function(L){return L.length>0&&new Set(L.map(function(l){return l[0].toLowerCase()})).size===L.length}],['AABB rhyme',function(L){return sch(L,'AABB')}],['Each line ≤ 7 words',function(L){return L.length>0&&L.every(function(l){return wd(l)<=7})}]]},
+{t:'Write an 8-line poem about friendship. ABABCDCD rhyme, include "bridge" and "lantern," no "heart."',d:'Hard',c:[N(8),['ABABCDCD rhyme',function(L){return sch(L,'ABABCDCD')}],['Has "bridge" and "lantern"',function(L,T){return has(T,'bridge')>0&&has(T,'lantern')>0}],['No "heart"',function(L,T){return !has(T,'heart')}]]},
+{t:'Write a 5-line poem about a robot learning to paint, with a title on its own line. Last line must not rhyme, include "canvas," every line ends in a different letter.',d:'Hard',title:1,c:[['Title line present',function(L,T,A){return A.length>=2}],N(5),['Includes "canvas"',function(L,T){return has(T,'canvas')>0}],['Last line does not rhyme with line 4 (heuristic)',function(L){return L.length>=5&&!rh(last(L[3]),last(L[4]))}],['Line endings all differ',function(L){return L.length>0&&new Set(L.map(function(l){return l.replace(/[^a-z]/gi,'').slice(-1).toLowerCase()})).size===L.length}]]}
+];
+var R={A:{},B:{}},M={A:{},B:{}},O={A:{},B:{}},cur='A';
+var DEMO={A:{0:'The dog is fun and likes to play outside in the sun, and he runs and runs all day.',1:'The ocean is deep and blue\nIt waves at me and you\nThe tide rolls in at night',2:'The cat is soft and walks around,\nShe makes a quiet little sound.\nShe sits upon the window sill and looks outside.'},
+B:{0:'The puppy waits beside the door,\nHis tail thumps hard against the floor.\nHe knows the sound of your return,\nAnd joy is all he has to learn.',1:'The ocean rolls in silver light,\nIt hums a song throughout the night.\nThe gulls above begin to glide,\nAnd foam is dancing on the tide.\nThe waves lean in to touch the shore,\nThen slip away to come once more.',2:'Softly the cat walks through the night,\nHer eyes are glowing, green and bright.\nShe jumps upon the garden wall,\nAnd watches shadows rise and fall'}};
+function parse(t,p){var A=t.split('\n').map(function(s){return s.trim()}).filter(Boolean);return{A:A,L:p.title?A.slice(1):A}}
+function grade(m,i){
+ var t=R[m][i]||'';if(!t.trim())return null;
+ var p=P[i],q=parse(t,p),mm=M[m][i]||[0,0];
+ var res=p.c.map(function(c,k){
+  var auto=!!c[1](q.L,t,q.A),key=i+'-'+k,isR=/rhyme/i.test(c[0]),over=isR&&(key in O[m]);
+  return{n:c[0],ok:over?O[m][key]:auto,auto:auto,isR:isR,over:over,key:key}});
+ var pts=res.filter(function(r){return r.ok}).length+mm[0]+mm[1];
+ return{res:res,pts:pts,max:p.c.length+2}}
+function sc(m){
+ var tot=0,n=0,strict=0,by={Easy:[],Medium:[],Hard:[]};
+ P.forEach(function(p,i){var g=grade(m,i);if(!g)return;n++;var s=g.pts/g.max;tot+=s;by[p.d].push(s);if(g.pts===g.max)strict++});
+ function av(a){return a.length?Math.round(100*a.reduce(function(x,y){return x+y},0)/a.length)+'%':'–'}
+ return{n:n,overall:n?Math.round(100*tot/n):null,strict:n?Math.round(100*strict/n):null,E:av(by.Easy),Md:av(by.Medium),H:av(by.Hard)}}
+function f(v){return v==null?'–':v+'%'}
+function verdict(a,b){
+ if(a.overall==null||b.overall==null)return'Score the same prompts for both models to see whether the change helped.';
+ var d=b.overall-a.overall;
+ return d>0?'Model B improved by '+d+' points: the change helped.':d<0?'Model B dropped '+(-d)+' points: a regression.':'No change between versions.'}
+function summary(){
+ var a=sc('A'),b=sc('B');
+ $('sum').innerHTML='<div class="tblwrap"><table><tr><th></th><th>Model A</th><th>Model B</th></tr>'+
+ '<tr><td>Prompts scored</td><td>'+a.n+'/10</td><td>'+b.n+'/10</td></tr>'+
+ '<tr><td>Overall score</td><td class="big">'+f(a.overall)+'</td><td class="big">'+f(b.overall)+'</td></tr>'+
+ '<tr><td>Strict pass rate</td><td>'+f(a.strict)+'</td><td>'+f(b.strict)+'</td></tr>'+
+ '<tr><td>Easy / Medium / Hard</td><td>'+a.E+' / '+a.Md+' / '+a.H+'</td><td>'+b.E+' / '+b.Md+' / '+b.H+'</td></tr></table></div>'+
+ '<p class="mu">'+verdict(a,b)+' Keep prompts and rubric fixed between runs.</p>'}
+function card(i){
+ var g=grade(cur,i),mm=M[cur][i]||[0,0];
+ if(!g)return'<div class="note" style="margin-top:6px">Paste a response to grade it.</div>';
+ var h=g.res.map(function(r){
+  var tag=r.isR?' <span class="note">('+(r.over?'overridden':'heuristic')+' · click to '+(r.over?'reset':'override')+')</span>':'';
+  return'<div class="chk'+(r.isR?' rh':'')+'" '+(r.isR?'data-o="'+r.key+'" title="Click to override"':'')+'><span class="'+(r.ok?'p':'f')+'">'+(r.ok?'✓':'✗')+'</span><span>'+esc(r.n)+tag+'</span></div>'}).join('');
+ h+='<div class="chk"><label><input type="checkbox" data-i="'+i+'" data-k="0" '+(mm[0]?'checked':'')+'>About the topic</label><label><input type="checkbox" data-i="'+i+'" data-k="1" '+(mm[1]?'checked':'')+'>Coherent</label></div>';
+ h+='<div class="score">'+g.pts+' / '+g.max+(g.pts===g.max?' · strict pass':'')+'</div>';
+ return h}
+function bind(el){
+ el.querySelectorAll('input[type=checkbox]').forEach(function(c){c.onchange=function(){
+  var i=+c.dataset.i;M[cur][i]=M[cur][i]||[0,0];M[cur][i][+c.dataset.k]=c.checked?1:0;upd(i)}});
+ el.querySelectorAll('[data-o]').forEach(function(d){d.onclick=function(){
+  var key=d.dataset.o,i=+key.split('-')[0],g=grade(cur,i);if(!g)return;
+  var r=g.res.filter(function(x){return x.key===key})[0];
+  if(key in O[cur])delete O[cur][key];else O[cur][key]=!r.auto;upd(i)}})}
+function upd(i){var r=$('r'+i);r.innerHTML=card(i);bind(r);summary()}
+function build(){
+ var L=$('list');
+ L.innerHTML=P.map(function(p,i){return'<div class="card"><div class="row"><b>'+(i+1)+'.</b><span class="pill">'+p.d+'</span></div><div style="margin:6px 0">'+esc(p.t)+'</div>'+
+ '<textarea data-i="'+i+'" placeholder="Paste the model\'s response here" aria-label="Response to prompt '+(i+1)+'">'+esc(R[cur][i]||'')+'</textarea><div id="r'+i+'">'+card(i)+'</div></div>'}).join('');
+ L.querySelectorAll('textarea').forEach(function(t){t.oninput=function(){R[cur][t.dataset.i]=t.value;upd(+t.dataset.i)}});
+ P.forEach(function(_,i){bind($('r'+i))})}
+function show(m){cur=m;$('tA').className=m==='A'?'on':'';$('tB').className=m==='B'?'on':'';build();summary()}
+function report(){
+ var a=sc('A'),b=sc('B'),s='CONSTRAINT EVAL RESULTS\n\n';
+ s+='Model A: overall '+f(a.overall)+', strict pass '+f(a.strict)+' (E '+a.E+' / M '+a.Md+' / H '+a.H+'), '+a.n+'/10 scored\n';
+ s+='Model B: overall '+f(b.overall)+', strict pass '+f(b.strict)+' (E '+b.E+' / M '+b.Md+' / H '+b.H+'), '+b.n+'/10 scored\n';
+ s+=verdict(a,b)+'\n\nPer prompt:\n';
+ P.forEach(function(p,i){var ga=grade('A',i),gb=grade('B',i);
+  s+=(i+1)+' ['+p.d+'] A: '+(ga?ga.pts+'/'+ga.max:'–')+'  B: '+(gb?gb.pts+'/'+gb.max:'–')+'\n'});
+ return s}
+$('tA').onclick=function(){show('A')};$('tB').onclick=function(){show('B')};
+$('demo').onclick=function(){['A','B'].forEach(function(m){R[m]={};M[m]={};O[m]={};Object.keys(DEMO[m]).forEach(function(i){R[m][i]=DEMO[m][i];M[m][i]=[1,1]})});show(cur)};
+$('clr').onclick=function(){R[cur]={};M[cur]={};O[cur]={};show(cur)};
+$('rep').onclick=function(){
+ var s=report(),box=$('repbox'),msg=$('repmsg');
+ box.value=s;
+ function fallback(){box.hidden=false;box.rows=12;box.select();msg.textContent='Select and copy the report below.'}
+ try{if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(s).then(function(){box.hidden=true;msg.textContent='Copied to clipboard.'},fallback)}else fallback()}catch(e){fallback()}};
+show('A');
+})();
+</script></body></html>
